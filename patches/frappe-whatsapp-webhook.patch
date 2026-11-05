@@ -1,0 +1,14 @@
+--- a/apps/frappe_whatsapp/frappe_whatsapp/utils/webhook.py
++++ b/apps/frappe_whatsapp/frappe_whatsapp/utils/webhook.py
+@@ -38,6 +38,11 @@
+ def post():
+ 	"""Post."""
+ 	data = frappe.local.form_dict
++	if not data or "entry" not in data:
++		try:
++			data = frappe._dict(json.loads(frappe.request.get_data(as_text=True) or "{}"))
++		except Exception:
++			data = frappe._dict({})
+ 	frappe.get_doc({
+ 		"doctype": "WhatsApp Notification Log",
+ 		"template": "Webhook",
