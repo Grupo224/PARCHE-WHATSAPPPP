@@ -1,98 +1,43 @@
-# WhatsApp CRM Fix (Frappe)
+# Parche de código WhatsApp para Frappe CRM
 
-Kit para reparar la integración WhatsApp ⇄ Frappe CRM en una instalación nueva de Frappe/ERPNext.
+Este paquete corrige dos fallos del código de integración de WhatsApp en instalaciones Frappe/ERPNext v15 con **`crm` y `frappe_whatsapp` ya instaladas**:
 
-Corrige los fallos reales que encontramos en producción/demo:
+- Un `403 PermissionError` al procesar mensajes de un número asociado a un Lead existente.
+- Un `500 KeyError: 'entry'` cuando el cuerpo JSON del webhook no aparece en `frappe.local.form_dict`.
 
-1. **`crm/api/whatsapp.py`** — mensajes de números con Lead existente devolvían `403 PermissionError` (el webhook corre como `Guest` y `get_assigned_users` hacía `check_permission("read")`).
-2. **`frappe_whatsapp/utils/webhook.py`** — el webhook fallaba intermitentemente con `500 KeyError: 'entry'` (dependía de `frappe.local.form_dict`).
-3. **Estados de CRM** — `New`, `Contacted`, etc. en inglés rompían el Server Script de vinculación.
-4. **Server Script de vinculación** — el que crea/vincular el Lead desde el mensaje entrante (estado en español, sin chequeos de permiso, owner correcto).
-5. **WhatsApp Settings** — sin `default_outgoing_account` no aparece la pestaña WhatsApp en el CRM.
-6. **IDs de WhatsApp Account** — espacios sobrantes en `business_id`/`app_id` rompían la suscripción al webhook.
+El instalador **solo modifica dos archivos de código** en el bench y guarda respaldos. No ejecuta `setup_whatsapp.py`, no configura sitios ni cuentas de WhatsApp, no cambia estados y no importa datos. El archivo de configuración específico de la instalación original fue retirado de este paquete. La operación normal del webhook, una vez configurado por el administrador, sí puede crear mensajes o Leads conforme a las apps instaladas.
 
 ## Requisitos
 
-- Frappe/ERPNext v15.
-- Apps instaladas: `frappe_whatsapp`, `crm`, `payments`.
-- `WhatsApp Account` configurada y `Active`.
+- Bench Frappe/ERPNext v15 en Linux con las apps `crm` y `frappe_whatsapp` instaladas.
+- Comando `patch` disponible.
+- Versiones de esas apps compatibles con los dos archivos `.patch`. Si no coinciden, el instalador se detiene antes de modificar el bench.
+- Una cuenta propia de WhatsApp Business configurada por el administrador para utilizar el webhook. Este paquete no proporciona credenciales ni cuentas.
 
-## Instalación
-
-### Paso 1 — Clonar
+## Aplicación
 
 ```bash
 git clone https://github.com/Grupo224/PARCHE-WHATSAPPPP.git
 cd PARCHE-WHATSAPPPP
-```
-
-### Paso 2 — Parches de código (una vez)
-
-```bash
-./apply.sh /ruta/al/bench     # ej: /home/erpnext/frappe
-```
-
-Hace respaldo automático (`*.bak-YYYYMMDD-HHMMSS`) de los dos archivos antes de parchear.
-
-### Paso 3 — Configuración y datos (una vez por sitio)
-
-Edita la sección CONFIG al inicio de `setup_whatsapp.py`:
-
-```python
-SITE = "app.altoplano.mx"
-SITES_PATH = "/home/erpnext/frappe/sites"
-LEAD_OWNER = "Administrator"
-WHATSAPP_ACCOUNT = "Altoplano"
-```
-
-Ejecuta:
-
-```bash
-cd /ruta/al/bench/sites
-../env/bin/python /ruta/al/setup_whatsapp.py
-```
-
-### Paso 4 — Reiniciar
-
-```bash
+./apply.sh /ruta/al/bench
 cd /ruta/al/bench
-bench --site TU_SITIO clear-cache
-kill -TERM $(pgrep -f 'gunicorn.*frappe.app:application' | sort -n | head -1)
+bench restart
 ```
 
-## Verificar
+`apply.sh` valida **ambos** parches antes de escribir. Si uno ya se aplicó o no corresponde a la versión instalada, termina sin cambios; no lo fuerces. Guarda respaldos `*.bak-AAAAMMDD-HHMMSS` junto a cada archivo modificado.
 
-Enviar un evento de prueba al webhook:
+Para un sitio nuevo, configura tu propia `WhatsApp Account`, la URL y el token del webhook siguiendo la documentación de las apps que instalaste. No ejecutes ningún script de configuración de la versión anterior de este repositorio.
 
-```bash
-curl -s -o /dev/null -w "%{http_code}\n" -X POST \
-  https://TU_DOMINIO/api/method/frappe_whatsapp.utils.webhook.webhook \
-  -H "Content-Type: application/json" \
-  -d '{"object":"whatsapp_business_account","entry":[{"id":"WABA_ID","changes":[{"field":"messages","value":{"messaging_product":"whatsapp","metadata":{"display_phone_number":"9993588642","phone_number_id":"PHONE_ID"},"contacts":[{"profile":{"name":"Prueba"},"wa_id":"5219990000000"}],"messages":[{"from":"5219990000000","id":"wamid.TEST1","timestamp":"1793830000","type":"text","text":{"body":"prueba"}}]}}]}]}'
-```
+## Reversión
 
-Esperado: `200` y el mensaje aparece en `WhatsApp Message` vinculado al Lead.
+Restaura los dos archivos desde los respaldos que `apply.sh` imprimió y ejecuta `bench restart`. Si hay otros cambios locales posteriores en esos archivos, revísalos antes de restaurar.
 
-## Nota sobre el Webhook en Meta
+## Alcance
 
-La URL del webhook y el verify token se configuran en la app de Meta:
+| Archivo del bench | Corrección |
+| --- | --- |
+| `apps/crm/crm/api/whatsapp.py` | Consulta asignados sin exigir permiso de lectura al usuario Guest y evita que un error de permiso en la notificación interrumpa el webhook. |
+| `apps/frappe_whatsapp/frappe_whatsapp/utils/webhook.py` | Lee el cuerpo JSON cuando `form_dict` no contiene `entry`. |
 
-- **Callback URL:** `https://TU_DOMINIO/api/method/frappe_whatsapp.utils.webhook.webhook`
-- **Verify token:** el mismo valor de `webhook_verify_token` de la `WhatsApp Account`.
+Una instalación con **solo ERPNext** no incluye estas integraciones: primero deben instalarse `crm` y `frappe_whatsapp` en el bench y en el sitio correspondiente.
 
-## Revertir los parches de código
-
-```bash
-cp apps/crm/crm/api/whatsapp.py.bak-* apps/crm/crm/api/whatsapp.py
-cp apps/frappe_whatsapp/frappe_whatsapp/utils/webhook.py.bak-* apps/frappe_whatsapp/frappe_whatsapp/utils/webhook.py
-```
-
-## Estructura
-
-```
-patches/crm-whatsapp.patch              → fix 403 (get_assignees + blindaje notify_agent)
-patches/frappe-whatsapp-webhook.patch   → fix 500 KeyError 'entry' (lectura robusta del JSON)
-apply.sh                                → aplica ambos parches con respaldo
-setup_whatsapp.py                       → estados en español + Server Script + Settings + IDs
-README.md
-```
