@@ -1,39 +1,44 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-BENCH="${1:-}"
-
-if [ -z "$BENCH" ]; then
-  echo "Uso: ./apply.sh /ruta/al/bench"
-  echo "Ej:  ./apply.sh /home/erpnext/frappe"
-  exit 1
+if [ "$#" -ne 1 ]; then
+  echo "Uso: ./apply.sh /ruta/al/bench" >&2
+  exit 2
 fi
 
-if [ ! -d "$BENCH/apps/crm" ] || [ ! -d "$BENCH/apps/frappe_whatsapp" ]; then
-  echo "No parece un bench de Frappe (falta apps/crm o apps/frappe_whatsapp): $BENCH"
-  exit 1
-fi
-
-DIR="$(cd "$(dirname "$0")" && pwd)"
-TS="$(date +%Y%m%d-%H%M%S)"
-
+BENCH="${1%/}"
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CRM="$BENCH/apps/crm/crm/api/whatsapp.py"
-WH="$BENCH/apps/frappe_whatsapp/frappe_whatsapp/utils/webhook.py"
+WHATSAPP="$BENCH/apps/frappe_whatsapp/frappe_whatsapp/utils/webhook.py"
+CRM_PATCH="$DIR/patches/crm-whatsapp.patch"
+WHATSAPP_PATCH="$DIR/patches/frappe-whatsapp-webhook.patch"
 
-for f in "$CRM" "$WH"; do
-  [ -f "$f" ] || { echo "No encontrado: $f"; exit 1; }
-  cp -a "$f" "$f.bak-$TS"
+for file in "$CRM" "$WHATSAPP" "$CRM_PATCH" "$WHATSAPP_PATCH"; do
+  if [ ! -f "$file" ]; then
+    echo "No encontrado: $file" >&2
+    exit 1
+  fi
 done
 
-echo "Aplicando crm-whatsapp.patch ..."
-patch -p1 -d "$BENCH" < "$DIR/patches/crm-whatsapp.patch"
+# Comprobar ambos parches antes de cambiar cualquier archivo del bench.
+for patch_file in "$CRM_PATCH" "$WHATSAPP_PATCH"; do
+  if ! patch --batch --forward --dry-run -p1 -d "$BENCH" < "$patch_file" >/dev/null 2>&1; then
+    echo "El parche no coincide con esta versión o ya fue aplicado: $patch_file" >&2
+    echo "No se modificó ningún archivo. Revisa la versión de crm/frappe_whatsapp." >&2
+    exit 1
+  fi
+done
 
-echo "Aplicando frappe-whatsapp-webhook.patch ..."
-patch -p1 -d "$BENCH" < "$DIR/patches/frappe-whatsapp-webhook.patch"
+timestamp="$(date +%Y%m%d-%H%M%S)"
+cp -a "$CRM" "$CRM.bak-$timestamp"
+cp -a "$WHATSAPP" "$WHATSAPP.bak-$timestamp"
 
-echo
-echo "Listo. Respaldos: $CRM.bak-$TS  y  $WH.bak-$TS"
-echo "Reinicia gunicorn para cargar los cambios:"
-echo "  cd $BENCH"
-echo "  bench --site TU_SITIO clear-cache"
-echo "  kill -TERM $(pgrep -f 'gunicorn.*frappe.app:application' | sort -n | head -1)"
+patch --batch --forward -p1 -d "$BENCH" < "$CRM_PATCH"
+patch --batch --forward -p1 -d "$BENCH" < "$WHATSAPP_PATCH"
+
+echo "Parches de código aplicados. Respaldos:"
+echo "  $CRM.bak-$timestamp"
+echo "  $WHATSAPP.bak-$timestamp"
+echo "Reinicia los procesos del bench con: cd \"$BENCH\" && bench restart"
+echo "No se modificaron sitios, cuentas de WhatsApp, estados ni datos de CRM."
+
