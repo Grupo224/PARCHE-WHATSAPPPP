@@ -19,7 +19,7 @@ El instalador **solo modifica dos archivos de código** en el bench y guarda res
 ```bash
 git clone https://github.com/Grupo224/PARCHE-WHATSAPPPP.git
 cd PARCHE-WHATSAPPPP
-./apply.sh /ruta/al/bench
+bash apply.sh /ruta/al/bench
 cd /ruta/al/bench
 bench restart
 ```
